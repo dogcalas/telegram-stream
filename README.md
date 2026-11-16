@@ -67,6 +67,54 @@ Genera un wheel y una distribución de código fuente en `dist/`. El paquete tod
 no está publicado en PyPI. Antes de distribuirlo públicamente, hay que elegir una
 licencia y definir su API; no se ha configurado publicación automática.
 
+## Docker
+
+Necesitas Docker con BuildKit (incluido en las versiones actuales de Docker).
+No necesitas instalar Python ni uv en el equipo para usar las imágenes.
+
+### Imagen de uso
+
+```sh
+docker build --target runtime --tag telegram-stream .
+docker run --rm telegram-stream python -c "import telegram_stream"
+```
+
+También puedes construirla con `make docker-build`. La etapa `runtime` es la
+predeterminada e incluye Python 3.14 y la librería instalada sin dependencias de
+desarrollo, código fuente de trabajo ni uv. Se ejecuta con un usuario sin privilegios.
+
+La imagen abre Python por defecto; para una sesión interactiva:
+
+```sh
+docker run --rm -it telegram-stream
+```
+
+Todavía no hay un proceso de streaming que mantener en ejecución, por lo que no
+se exponen puertos ni se configura un servicio con Docker Compose.
+
+### Imagen de desarrollo
+
+```sh
+docker build --target development --tag telegram-stream:dev .
+docker run --rm telegram-stream:dev ruff format --check .
+docker run --rm telegram-stream:dev ruff check .
+docker run --rm telegram-stream:dev ty check
+```
+
+También puedes construirla con `make docker-dev`. Incluye el proyecto en modo
+editable, uv, Ruff, ty y pytest. Para trabajar con cambios locales sin reconstruir:
+
+```sh
+docker run --rm -it \
+  --mount "type=bind,source=$(pwd)/src,target=/app/src" \
+  telegram-stream:dev
+```
+
+El montaje comparte únicamente `src/`, no el entorno virtual del equipo. Si
+cambian las dependencias o necesitas copiar otros archivos, reconstruye la imagen.
+Ambas imágenes instalan las dependencias con `uv.lock`; `.dockerignore` excluye
+entornos locales, artefactos, archivos `.env` y sesiones de Telegram del contexto.
+
 ## Credenciales
 
 No guardes claves, tokens ni sesiones de Telegram en el código o en Git. Los

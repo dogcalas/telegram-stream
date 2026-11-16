@@ -1,0 +1,28 @@
+# Repository metadata and local environments
+**/.git
+**/.venv
+**/venv
+**/__pycache__
+**/*.py[cod]
+
+# Generated distributions, caches, and reports
+/build
+/dist
+**/*.egg-info
+**/.pytest_cache
+**/.ruff_cache
+**/.ty_cache
+**/.mypy_cache
+**/.coverage*
+**/htmlcov
+
+# Never send credentials or Telegram sessions to the build context.
+**/.env*
+**/*.session
+**/*.session-journal
+**/*.session-wal
+**/*.session-shm
+
+# Local files
+**/.DS_Store
+**/*.log

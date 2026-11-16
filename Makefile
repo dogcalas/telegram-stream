@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := check
 
-.PHONY: setup format format-check lint typecheck test check build
+.PHONY: setup format format-check lint typecheck test check build docker-build docker-dev
 
 setup:
 	uv sync --locked
@@ -24,3 +24,9 @@ check: format-check lint typecheck
 
 build:
 	uv build --no-sources
+
+docker-build:
+	docker build --target runtime --tag telegram-stream .
+
+docker-dev:
+	docker build --target development --tag telegram-stream:dev .
