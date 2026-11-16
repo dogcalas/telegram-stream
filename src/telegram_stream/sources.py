@@ -25,7 +25,11 @@ class MediaInput:
     headers: dict[str, str] = field(default_factory=dict, repr=False)
 
     def options(self, timeout: int, *, reconnect: bool = False) -> list[str]:
-        if urlsplit(self.location).scheme not in {"http", "https"}:
+        scheme = urlsplit(self.location).scheme
+        if scheme == "rtmp":
+            # A pushed feed has nothing to reconnect to: fail fast and re-resolve.
+            return ["-rw_timeout", str(timeout * 1_000_000)]
+        if scheme not in {"http", "https"}:
             return []
         options = ["-rw_timeout", str(timeout * 1_000_000)]
         if reconnect:
@@ -123,6 +127,10 @@ class SourceResolver:
             # The isolated browser sidecar renders HTML into a private HLS feed.
             # Never give the HTML page URL directly to ffprobe/FFmpeg.
             inputs = (MediaInput(self.settings.web_stream_url),)
+        elif self.settings.kind == "rtmp":
+            # The ingest sidecar authenticates the pushed feed; read it back privately.
+            redactor.add(self.settings.rtmp_stream_key)
+            inputs = (MediaInput(self.settings.rtmp_read_url),)
         else:
             inputs = (MediaInput(self.settings.source),)
         video_index = None

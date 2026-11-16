@@ -35,6 +35,17 @@ def _bitrate(value: str, name: str) -> int:
     return int(value[:-1] if multiplier != 1 else value) * multiplier
 
 
+STREAM_KEY = re.compile(r"[A-Za-z0-9_-]{16,128}")
+
+
+def stream_key(env: Mapping[str, str]) -> str:
+    """The key travels in RTMP URLs, so restrict it to URL-safe characters."""
+    key = env.get("RTMP_STREAM_KEY", "")
+    if not STREAM_KEY.fullmatch(key):
+        raise FatalError("RTMP_STREAM_KEY must be 16-128 characters from A-Z, a-z, 0-9, _ or -")
+    return key
+
+
 def data_directory() -> Path:
     return Path(os.environ.get("DATA_DIR", "./data")).expanduser().resolve()
 
@@ -67,6 +78,8 @@ class Settings:
     cookies_file: Path | None = field(default=None, repr=False)
     extractor_args: str = field(default="", repr=False)
     web_stream_url: str = field(default="http://web:8080/index.m3u8", repr=False)
+    rtmp_ingest_url: str = field(default="rtmp://ingest:1935/live", repr=False)
+    rtmp_stream_key: str = field(default="", repr=False)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None, *, require_stream: bool = True) -> Self:
@@ -76,8 +89,8 @@ class Settings:
         if not re.fullmatch(r"[0-9a-fA-F]{32}", api_hash):
             raise FatalError("TELEGRAM_API_HASH must be the 32-character API hash")
         kind = env.get("SOURCE_TYPE", "auto").lower()
-        if kind not in {"auto", "youtube", "hls", "file", "web"}:
-            raise FatalError("SOURCE_TYPE must be auto, youtube, hls, file, or web")
+        if kind not in {"auto", "youtube", "hls", "file", "web", "rtmp"}:
+            raise FatalError("SOURCE_TYPE must be auto, youtube, hls, file, web, or rtmp")
         preset = env.get("ENCODER_PRESET", "veryfast")
         if preset not in {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium"}:
             raise FatalError("Unsupported ENCODER_PRESET")
@@ -110,11 +123,23 @@ class Settings:
             ),
             extractor_args=env.get("YOUTUBE_EXTRACTOR_ARGS", ""),
             web_stream_url=env.get("WEB_STREAM_URL", "http://web:8080/index.m3u8"),
+            rtmp_ingest_url=env.get("RTMP_INGEST_URL", "rtmp://ingest:1935/live"),
+            rtmp_stream_key=env.get("RTMP_STREAM_KEY", "") if kind == "rtmp" else "",
         )
         if settings.width % 2 or settings.height % 2:
             raise FatalError("VIDEO_WIDTH and VIDEO_HEIGHT must be even")
         if settings.retry_initial > settings.retry_max:
             raise FatalError("RETRY_INITIAL cannot exceed RETRY_MAX")
+        if settings.kind == "rtmp":
+            # The publisher pushes to the ingest sidecar; SOURCE is not used.
+            ingest = urlsplit(settings.rtmp_ingest_url)
+            if ingest.scheme != "rtmp" or not ingest.hostname or ingest.query or ingest.username:
+                raise FatalError("RTMP_INGEST_URL must be a plain rtmp:// URL without credentials")
+            if require_stream:
+                stream_key(env)
+                if not settings.channel:
+                    raise FatalError("TELEGRAM_CHANNEL is required")
+            return settings
         if require_stream and (not settings.channel or not settings.source):
             raise FatalError("TELEGRAM_CHANNEL and SOURCE are required")
         if require_stream and settings.kind != "file":
@@ -142,6 +167,18 @@ class Settings:
         if host in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}:
             return "youtube"
         return "hls" if urlsplit(self.source).scheme in {"http", "https"} else "file"
+
+    @property
+    def rtmp_read_url(self) -> str:
+        return f"{self.rtmp_ingest_url}?user=reader&pass={self.rtmp_stream_key}"
+
+    @property
+    def source_retry_max(self) -> int:
+        # A pushed feed starts whenever the operator goes live: keep polling briskly
+        # instead of backing off for minutes while the ingest is idle.
+        if self.kind == "rtmp":
+            return max(self.retry_initial, min(self.retry_max, 10))
+        return self.retry_max
 
     @property
     def watchdog_timeout(self) -> int:

@@ -6,7 +6,7 @@
 [![Ruff][badge-ruff]][ruff]
 [![License: MIT][badge-license]](LICENSE)
 
-Publish YouTube Live, HLS, looped local video, or a rendered web page to
+Publish YouTube Live, HLS, an RTMP push, looped local video, or a rendered web page to
 **Telegram Channel Live Stories**, with supervised FFmpeg publishing and restart
 recovery. Output appears in the channel's **story bar**, not as a traditional
 channel livestream.
@@ -147,6 +147,48 @@ container. Never expose its HLS server or DevTools publicly. See
 When switching back to another source, stop the sidecar with
 `docker compose --profile web stop web`.
 
+### RTMP push (optional ingest sidecar)
+
+Send a feed from OBS, FFmpeg, or a hardware encoder instead of pulling a URL:
+
+```dotenv
+SOURCE_TYPE=rtmp
+RTMP_STREAM_KEY=use_openssl_rand_hex_24_here
+```
+
+```sh
+docker compose --profile rtmp up -d --build
+```
+
+`SOURCE` is ignored. Generate the key with `openssl rand -hex 24`
+(16-128 characters from `A-Z a-z 0-9 _ -`). Publish to:
+
+```text
+rtmp://HOST:1935/live?user=publisher&pass=RTMP_STREAM_KEY
+```
+
+In OBS use **Server** `rtmp://HOST:1935` and **Stream Key**
+`live?user=publisher&pass=RTMP_STREAM_KEY`. With FFmpeg:
+
+```sh
+ffmpeg -re -i input.mp4 -c:v libx264 -g 60 -c:a aac -f flv \
+  "rtmp://127.0.0.1:1935/live?user=publisher&pass=$RTMP_STREAM_KEY"
+```
+
+The sidecar ([MediaMTX](https://github.com/bluenviron/mediamtx)) accepts one
+authenticated H.264/AAC feed; the publisher reads it back privately and re-encodes
+it for Telegram. The Live Story is created as soon as the service starts, and the
+publisher polls every few seconds until you start pushing, then again whenever the
+feed drops.
+
+The ingest listens on `127.0.0.1:1935` by default. To push from another machine set
+`RTMP_BIND=0.0.0.0:1935`. **RTMP is unencrypted:** the key and video cross the
+network in clear text, so expose the port only on networks you trust (LAN, VPN, or
+an SSH tunnel) and rotate the key if it may have leaked.
+
+When switching back to another source, stop the sidecar with
+`docker compose --profile rtmp stop ingest`.
+
 ## Configuration
 
 See [`.env.example`](.env.example) for the complete reference. Common options:
@@ -190,6 +232,7 @@ docker compose up -d
 | Another process owns `DATA_DIR` | Stop the other publisher/auth process; do not delete lock files |
 | Source retries / stalled video | Check source availability, access restrictions, upload bandwidth, and CPU |
 | Web source retries / no browser feed | Start the `web` profile, inspect `docker compose logs web`, and check the page loads |
+| RTMP source retries / `authentication failed` | Start the `rtmp` profile, check the encoder is pushing, and compare the key with `docker compose logs ingest` |
 
 Unknown active stories are not automatically taken over. Stop the service and
 verify the story in Telegram before deliberately using

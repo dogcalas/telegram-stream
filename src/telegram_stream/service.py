@@ -31,7 +31,7 @@ class Service:
         self.last_tick_monotonic = time.monotonic()
         self.last_telegram_success = 0.0
         self.telegram_backoff = Backoff(settings.retry_initial, settings.retry_max)
-        self.source_backoff = Backoff(settings.retry_initial, settings.retry_max)
+        self.source_backoff = Backoff(settings.retry_initial, settings.source_retry_max)
         self.next_source_attempt = 0.0
 
     def _write_health(self) -> None:

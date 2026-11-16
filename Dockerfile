@@ -60,6 +60,20 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=90s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
 ENTRYPOINT ["python", "-m", "telegram_stream.web"]
 
+FROM bluenviron/mediamtx:1.21.3 AS mediamtx
+
+FROM base AS ingest
+
+# Only the standard library is needed to validate the key and write the config.
+COPY --from=mediamtx /mediamtx /usr/local/bin/mediamtx
+COPY src/ /app/src/
+ENV PYTHONPATH=/app/src
+USER app
+EXPOSE 1935
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD ["python", "-c", "import socket; socket.create_connection(('127.0.0.1', 1935), 3).close()"]
+ENTRYPOINT ["python", "-m", "telegram_stream.ingest"]
+
 FROM builder AS development
 
 COPY . .

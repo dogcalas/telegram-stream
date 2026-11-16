@@ -63,5 +63,33 @@ services:
         max-size: 10m
         max-file: "3"
 
+  ingest:
+    profiles: ["rtmp"]
+    build:
+      context: .
+      target: ingest
+    image: telegram-stream:ingest
+    init: true
+    restart: unless-stopped
+    # Deliberately do not pass .env, Telegram credentials, or session volumes.
+    environment:
+      RTMP_STREAM_KEY: ${RTMP_STREAM_KEY:-}
+    ports:
+      # Loopback by default. RTMP is unencrypted: widen this only on trusted networks.
+      - "${RTMP_BIND:-127.0.0.1:1935}:1935"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
 volumes:
   telegram-state:

@@ -47,6 +47,9 @@ can be prepared. There is no guaranteed response or remediation timetable.
 - Sources and web pages can cause outbound requests, including to networks
   reachable from the deployment. Use trusted inputs and network-level egress
   restrictions where needed; URL validation is not network isolation.
+- The optional RTMP ingest authenticates publishers with `RTMP_STREAM_KEY`, but
+  RTMP itself is unencrypted. It binds to loopback by default; anyone who can
+  observe traffic to an exposed port can read the key and replace the feed.
 - Host and Docker administrators can read environment variables, mounted files,
   and process arguments. RTMP keys may appear in FFmpeg's arguments. The service
   cannot hide credentials from an administrator or a compromised host.
