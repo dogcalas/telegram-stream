@@ -43,7 +43,7 @@ traditional channel livestream. Bot tokens are not supported.
 
 ```text
 YouTube Live / HLS / local file ──────────┐
-                                         ├─ FFmpeg → RTMP(S) → Telegram Live Story
+                                          ├─ FFmpeg → RTMP(S) → Telegram Live Story
 Web page → Chromium / Xvfb → private HLS ─┘
 ```
 
@@ -511,14 +511,10 @@ restart the container, and end the story in Telegram to observe recreation.
 Check that only one FFmpeg publisher and one active Live Story exist. A
 traditional channel livestream is not a successful Live Story acceptance test.
 
-## Contributing and support
+## Acknowledgments
 
-- Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, coding conventions, and
-  validation guidance.
-- Use the [issue templates](https://github.com/ragnarok22/telegram-stream/issues/new/choose)
-  to report a bug or propose a feature.
-- Follow the [Code of Conduct](CODE_OF_CONDUCT.md) in project discussions.
-- Report vulnerabilities privately using [SECURITY.md](SECURITY.md).
+The idea for streaming web pages was inspired by
+[qvapay/tglive](https://github.com/qvapay/tglive).
 
 ## License
 
