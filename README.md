@@ -1,16 +1,55 @@
 # telegram-stream
 
-A small, single-channel service that continuously publishes YouTube Live, HLS,
-web pages, or looped local video to **Telegram Channel Live Stories** using a Telegram **user**
-account, MTProto, and FFmpeg. Requires Python 3.12+ or Docker Compose v2.
+[![CI][badge-ci]][ci]
+[![Python 3.12+][badge-python]][python]
+[![uv][badge-uv]][uv]
+[![Ruff][badge-ruff]][ruff]
+[![License: MIT][badge-license]](LICENSE)
 
-This is **not** a traditional channel livestream. It obtains RTMP credentials with
-`phone.getGroupCallStreamRtmpUrl(live_story=True, revoke=False)` and creates stories
-with `stories.startLive(rtmp_stream=True)`. It never calls `phone.createGroupCall`.
+Publish YouTube Live, HLS, looped local video, or a rendered web page to
+**Telegram Channel Live Stories**, with supervised FFmpeg publishing and restart
+recovery.
 
-**24/7 means supervised operation and recovery, not an unlimited Telegram session
-or gap-free video.** Telegram can terminate stories; sources can disappear; API
-eligibility, rate limits, and YouTube access restrictions still apply.
+The service runs one channel per deployment using a Telegram **user account**,
+MTProto, and FFmpeg. Output appears in the channel's **story bar**, not as a
+traditional channel livestream. Bot tokens are not supported.
+
+> [!IMPORTANT]
+> This project is in alpha. **24/7 means supervised operation and recovery, not
+> an unlimited Telegram session or gap-free video.** Telegram eligibility, rate
+> limits, source availability, and access restrictions still apply. Validate your
+> setup on a dedicated test channel before relying on it.
+
+**[Quick start](#quick-start-docker-compose)** ·
+[Sources](#sources) ·
+[Configuration](#configuration) ·
+[Recovery](#recovery-and-ownership) ·
+[Troubleshooting](#health-logs-and-troubleshooting) ·
+[Development](#local-development) ·
+[Security](SECURITY.md)
+
+## Overview
+
+- **Four source types:** YouTube Live, HLS/M3U8, local files, and optional web-page
+  capture through an isolated browser sidecar.
+- **Automatic recovery:** renews YouTube media URLs, detects stalled video, and
+  restarts the publisher with backoff.
+- **Explicit story ownership:** persists creation IDs and reconciles existing
+  stories across restarts instead of blindly creating replacements.
+- **Operational visibility:** JSON logs, liveness and readiness status, and
+  media-progress monitoring.
+- **Docker-first deployment:** persistent session storage, non-root containers,
+  and no published host ports by default.
+
+```text
+YouTube Live / HLS / local file ──────────┐
+                                         ├─ FFmpeg → RTMP(S) → Telegram Live Story
+Web page → Chromium / Xvfb → private HLS ─┘
+```
+
+Docker Compose v2 is the recommended way to run the service; the image includes
+its runtime dependencies. Native runs on Linux/macOS require Python 3.12+ and
+FFmpeg/ffprobe.
 
 ## Telegram prerequisites
 
@@ -25,44 +64,78 @@ eligibility, rate limits, and YouTube access restrictions still apply.
 4. Use **one publisher deployment per channel**, with a dedicated persistent volume.
    Do not start another publisher or rotate its RTMP key in Telegram while running.
 
-The locked Telethon **1.45.0** wheel ships **MTProto layer 229**, including
-`stories.StartLiveRequest.rtmp_stream`,
-`phone.GetGroupCallStreamRtmpUrlRequest.live_story`, `MessageMediaVideoStream`, and
-Live Story updates. Startup checks the schema, and tests verify serialized flags.
-Do not downgrade to an older Telethon/Pyrogram build without verifying its schema.
-
 ## Quick start: Docker Compose
 
-Run these commands from the repository root:
+### 1. Clone and configure
+
+If you already have a checkout, run the remaining commands from its root.
 
 ```sh
+git clone https://github.com/ragnarok22/telegram-stream.git
+cd telegram-stream
 cp .env.example .env
 chmod 600 .env
 mkdir -p media
 ```
 
-Edit `.env`: set `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_CHANNEL`, and
-`SOURCE`. Use `@channel_username` or the channel's numeric `-100…` peer ID.
+Edit `.env` with your credentials, channel, and source. For YouTube Live:
+
+```dotenv
+TELEGRAM_API_ID=your_api_id
+TELEGRAM_API_HASH=your_32_character_api_hash
+TELEGRAM_CHANNEL=@your_channel
+SOURCE_TYPE=youtube
+SOURCE=https://www.youtube.com/watch?v=YOUR_LIVE_VIDEO_ID
+```
+
+Replace every placeholder. `TELEGRAM_API_ID` must be numeric; use
+`@channel_username` or the channel's numeric `-100…` peer ID for the channel.
+For other inputs, use the [source examples](#sources) below. Web-page capture
+requires the optional `web` profile.
+
+### 2. Authenticate your Telegram user
 
 ```sh
 docker compose build
 docker compose run --rm streamer auth
-docker compose up -d
-docker compose logs -f --tail=100 streamer
 ```
 
 `auth` interactively asks for the phone number, Telegram login code, and optional
 2FA password. Codes may arrive in an existing Telegram app rather than SMS. No
-login code/password is saved. The resulting **user session is saved** to the
-`telegram-state` volume; it effectively grants access to your account.
+login code or password is saved.
 
-Authenticate **before** starting the service. For reauthentication:
+> [!WARNING]
+> The resulting **user session is saved** to the `telegram-state` volume and
+> effectively grants access to your account. Never commit, share, or upload it.
+> See [SECURITY.md](SECURITY.md) for safe handling and incident response.
+
+### 3. Start and verify
+
+```sh
+docker compose up -d
+docker compose logs -f --tail=100 streamer
+```
+
+In another terminal, inspect the publisher:
+
+```sh
+docker compose exec streamer telegram-stream status
+```
+
+Allow time for startup, then look for `"ready": true` in the JSON status and confirm
+the video appears in your channel's **story bar**. See
+[health and troubleshooting](#health-logs-and-troubleshooting) if it does not.
+
+Authenticate **before** starting the service. To reauthenticate an existing
+deployment, stop the publisher first:
 
 ```sh
 docker compose stop streamer
 docker compose run --rm streamer auth
 docker compose up -d
 ```
+
+### Container defaults
 
 The image runs as UID/GID **10001**, uses an init process through Compose, drops
 Linux capabilities, and has a read-only root filesystem. A new named volume is
@@ -74,6 +147,19 @@ DNS, HTTPS/MTProto connections, and the RTMP/RTMPS endpoint returned by Telegram
 The image includes FFmpeg/ffprobe, yt-dlp, its EJS challenge scripts, and Deno.
 
 ## Sources
+
+| Source | `SOURCE_TYPE` | Behavior |
+| --- | --- | --- |
+| [YouTube Live](#youtube-live) | `youtube` | Resolves a currently live video; refreshes media URLs on publisher restart |
+| [HLS / M3U8](#hls--m3u8) | `hls` | Publishes an HTTP(S) media stream |
+| [Local files](#local-files) | `file` | Loops a video; supplies silence when audio is missing |
+| [Web pages](#web-pages-optional-browser-sidecar) | `web` | Captures a trusted page through the optional browser sidecar; video only |
+
+`SOURCE_TYPE=auto` detects YouTube domains, treats other HTTP(S) URLs as HLS/network
+inputs, and treats remaining values as filesystem paths. Use explicit `web` for
+HTML pages; `auto` does not launch the browser sidecar.
+
+Only restream material you have permission to distribute.
 
 ### YouTube Live
 
@@ -90,7 +176,6 @@ Extractor HTTP headers are passed to FFmpeg. Playlists and downloading are disab
 Public, unrestricted streams are the simplest deployment. YouTube may block
 datacenter IPs, request cookies/PO tokens, or change extraction behavior. This
 service does not bypass those restrictions or guarantee every YouTube URL works.
-Only restream material you have permission to distribute.
 
 Optional cookies should be exported in Netscape format into an ignored
 `secrets/youtube-cookies.txt`. Add a Compose override:
@@ -154,12 +239,12 @@ docker compose logs -f web streamer
 The optional `web` container runs Chromium in a virtual Xvfb display. It captures
 the visible page and serves a rolling HLS feed on the **private Compose network**;
 the existing publisher sends that feed to Telegram. No host ports are exposed.
-There is still only one Telegram publisher/keeper.
+There is still only one Telegram publisher.
 
-**This first web mode captures video only.** Chromium audio is muted; the
-publisher supplies silent AAC. It does not play the MP4's music, capture website
-audio, automatically scroll, click, or log in. Public, trusted pages are supported.
-Normal page animations and client-side data updates continue running.
+**Web capture is video-only.** Chromium audio is muted; the publisher supplies
+silent AAC. It does not capture website audio, automatically scroll, click, or
+log in. Public, trusted pages are supported. Normal page animations and
+client-side data updates continue running.
 
 For vertical 720×1280 output, Chromium renders a 540×960 CSS viewport at 2× scale,
 then downsamples to 720×1280. This avoids Chrome's minimum-window-width cropping.
@@ -169,7 +254,7 @@ The sidecar waits for the page to load and supervises Chromium, Xvfb, and fresh
 HLS segments. If rendering fails, it exits for Docker to restart it, while the
 publisher's normal source retries recover the feed.
 
-To preview a page while leaving the current MP4/HLS publisher untouched:
+To start the sidecar without changing the current local-file or HLS publisher:
 
 ```sh
 WEB_PAGE_URL=https://reinierhernandez.com docker compose --profile web up -d --build --wait web
@@ -188,17 +273,25 @@ for Docker compatibility. This is not a replacement for Chromium's sandbox:
 only open trusted pages, keep the image updated, and do not expose its HLS server
 or DevTools to the Internet.
 
-`SOURCE_TYPE=auto` detects YouTube domains, treats other HTTP(S) URLs as HLS/network
-inputs, and treats remaining values as filesystem paths. Use explicit `web` for
-HTML pages; they are never automatically mistaken for media streams.
-
 ## Configuration
 
 See [`.env.example`](.env.example) for all settings. The application reads the
 **process environment**; it does not implicitly load a `.env` file. Compose does.
 
+### Required settings
+
+| Setting | Purpose |
+| --- | --- |
+| `TELEGRAM_API_ID` | Numeric user API ID from [my.telegram.org](https://my.telegram.org/apps) |
+| `TELEGRAM_API_HASH` | Corresponding 32-character API hash; keep it private |
+| `TELEGRAM_CHANNEL` | Broadcast channel username or numeric `-100…` peer ID |
+| `SOURCE` | Live media URL, local video path, or web-page URL |
+
+### Optional settings
+
 | Setting | Default | Purpose |
 | --- | --- | --- |
+| `SOURCE_TYPE` | `auto` | `auto`, `youtube`, `hls`, `file`, or `web` |
 | `VIDEO_WIDTH`, `VIDEO_HEIGHT` | `1280`, `720` | Even output dimensions; aspect-preserving letterbox |
 | `VIDEO_FPS` | `30` | Constant output frame rate |
 | `VIDEO_BITRATE`, `AUDIO_BITRATE` | `2500k`, `128k` | H.264 / AAC bitrate |
@@ -215,10 +308,14 @@ See [`.env.example`](.env.example) for all settings. The application reads the
 | `DATA_DIR` | `./data` | Local persistent directory; Compose overrides to `/data` |
 | `WEB_STREAM_URL` | `http://web:8080/index.m3u8` | Browser sidecar's private HLS feed |
 | `WEB_PAGE_URL` | empty | Optional sidecar page override, otherwise uses `SOURCE` |
+| `YOUTUBE_COOKIES_FILE` | empty | Path to a readable Netscape-format cookie file |
+| `YOUTUBE_EXTRACTOR_ARGS` | empty | Optional yt-dlp extractor arguments |
 
 Encoding uses H.264 main profile, `yuv420p`, AAC stereo, a two-second GOP, and FLV.
-Software encoding is intentional; hardware/GPU passthrough is outside the MVP.
-Recreate the container to apply `.env` changes: `docker compose up -d`.
+Software encoding is intentional; hardware/GPU passthrough is not currently
+supported. Apply `.env` changes with `docker compose up -d`; Compose recreates
+the container when its configuration changes. `docker compose restart` does not
+reload environment settings.
 
 ## Recovery and ownership
 
@@ -260,6 +357,19 @@ the story is left for restart reconciliation; Telegram may end it while no media
 is being published. Enable `END_LIVE_STORY_ON_SHUTDOWN` to request termination of
 the still-owned call on a graceful stop. Force-kill cannot guarantee cleanup.
 
+### Telegram API compatibility
+
+The service obtains RTMP credentials with
+`phone.getGroupCallStreamRtmpUrl(live_story=True, revoke=False)` and creates
+stories with `stories.startLive(rtmp_stream=True)`. It never calls
+`phone.createGroupCall`.
+
+The locked Telethon **1.45.0** wheel ships **MTProto layer 229**, including
+`stories.StartLiveRequest.rtmp_stream`,
+`phone.GetGroupCallStreamRtmpUrlRequest.live_story`, `MessageMediaVideoStream`, and
+Live Story updates. Startup checks the schema, and tests verify serialized flags.
+Do not downgrade to an older Telethon/Pyrogram build without verifying its schema.
+
 ## Health, logs, and troubleshooting
 
 ```sh
@@ -268,6 +378,11 @@ docker compose exec streamer telegram-stream status
 docker compose exec streamer telegram-stream healthcheck
 docker compose logs --tail=100 streamer
 ```
+
+| Signal | Meaning |
+| --- | --- |
+| `healthy` | The supervisor is alive and responsive |
+| `ready` | Media is advancing and Telegram has recently confirmed the story |
 
 `status` prints JSON including `healthy`, `ready`, phase, story ID, FFmpeg PID,
 media-progress age, and last successful Telegram check. It never opens the session.
@@ -288,6 +403,8 @@ redacted. Dependency traceback/request dumps are intentionally not emitted.
 Useful events include `live_story_ready`, `source_retry`, `source_interrupted`,
 `telegram_retry`, and `fatal`. Compose limits retained log size.
 
+### Common problems
+
 | Symptom | Action |
 | --- | --- |
 | Unauthorized session | Stop, run `auth`, restart; check account/session revocation |
@@ -299,6 +416,10 @@ Useful events include `live_story_ready`, `source_retry`, `source_interrupted`,
 | FFmpeg stalls / source retries | Check source reachability, expiring URLs, upload bandwidth, CPU |
 | Volume permission denied | Ensure `/data` belongs to UID/GID 10001 with private permissions |
 | Web source retries / no browser feed | Start the `web` profile, inspect `docker compose logs web`, and check the page loads |
+
+For bug reports, include your revision, source type, deployment method, and
+sanitized logs. Never attach credentials, session files, or state backups. Use
+[private reporting](SECURITY.md#reporting-a-vulnerability) for security issues.
 
 ## Linux / Proxmox deployment and security
 
@@ -325,12 +446,18 @@ to preserve ownership and pending creation IDs. Do not use `docker compose down 
 unless intentionally destroying credentials and recovery state. Restoring a backup
 does not guarantee its Telegram session is still authorized.
 
+For the full threat model, deployment safeguards, and credential-leak response,
+see [SECURITY.md](SECURITY.md).
+
 ## Local development
 
-Install Python 3.12+ and FFmpeg/ffprobe. `uv sync --locked` installs the Python
-dependencies, including yt-dlp's pinned Deno runtime and EJS scripts.
+Install [uv][uv], Python 3.12+, and FFmpeg/ffprobe. The development interpreter
+pin is Python 3.14; the Docker image uses Python 3.12, the minimum supported
+version. `uv sync --locked` installs development tools and Python dependencies,
+including yt-dlp's pinned Deno runtime and EJS scripts.
 
 ```sh
+uv python install
 uv sync --locked
 # Export settings using your shell; .env.example is not automatically sourced.
 export TELEGRAM_API_ID=123456
@@ -341,10 +468,25 @@ uv run --locked telegram-stream auth
 uv run --locked telegram-stream run
 ```
 
-Keep the existing `make setup`, `make format`, `make check`, `make test`, and
-`make build` commands. The development interpreter pin is Python 3.14; the image
-uses Python 3.12 to exercise the minimum supported version. No dev tools ship in
-the runtime image. For a development container, override its entrypoint:
+### Development commands
+
+| Command | Purpose |
+| --- | --- |
+| `make setup` | Install locked project and development dependencies |
+| `make format` | Format Python code with Ruff |
+| `make check` | Check formatting, lint, and types; does not run tests |
+| `make test` | Run pytest tests |
+| `make build` | Build source and wheel distributions |
+
+Install the optional browser dependency group before running the complete test
+suite, which includes `tests/test_web.py`:
+
+```sh
+uv sync --locked --group browser
+```
+
+No development tools ship in the runtime image. For a development container,
+override its entrypoint:
 
 ```sh
 docker build --target development -t telegram-stream:dev .
@@ -353,7 +495,7 @@ docker run --rm --entrypoint ruff telegram-stream:dev check .
 
 The separate `web` image installs only the `browser` dependency group, not
 Telethon/yt-dlp/Deno. It adds Chromium, Xvfb, and fonts. For local sidecar development,
-install Chromium/Xvfb and use `uv run --group browser python -m telegram_stream.web`
+install Chromium/Xvfb and use `uv run --locked --group browser python -m telegram_stream.web`
 with `PAGE_URL` and `WEB_WIDTH`/`WEB_HEIGHT`/`WEB_FPS` in the environment.
 
 ### Validation
@@ -369,6 +511,19 @@ restart the container, and end the story in Telegram to observe recreation.
 Check that only one FFmpeg publisher and one active Live Story exist. A
 traditional channel livestream is not a successful Live Story acceptance test.
 
+## Contributing and support
+
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, coding conventions, and
+  validation guidance.
+- Use the [issue templates](https://github.com/ragnarok22/telegram-stream/issues/new/choose)
+  to report a bug or propose a feature.
+- Follow the [Code of Conduct](CODE_OF_CONDUCT.md) in project discussions.
+- Report vulnerabilities privately using [SECURITY.md](SECURITY.md).
+
+## License
+
+Released under the [MIT License](LICENSE).
+
 ## References
 
 - [Telegram Live Stories](https://core.telegram.org/api/group-calls#live-stories)
@@ -376,3 +531,13 @@ traditional channel livestream is not a successful Live Story acceptance test.
 - [stories.startLive](https://core.telegram.org/method/stories.startLive)
 - [phone.getGroupCallStreamRtmpUrl](https://core.telegram.org/method/phone.getGroupCallStreamRtmpUrl)
 - [Telethon generated API](https://tl.telethon.dev/methods/stories/start_live.html)
+
+[badge-ci]: https://github.com/ragnarok22/telegram-stream/actions/workflows/ci.yml/badge.svg?branch=main
+[ci]: https://github.com/ragnarok22/telegram-stream/actions/workflows/ci.yml
+[badge-python]: https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white
+[python]: https://www.python.org/downloads/
+[badge-uv]: https://img.shields.io/badge/dependencies-uv-DE5FE9?logo=uv&logoColor=white
+[uv]: https://docs.astral.sh/uv/
+[badge-ruff]: https://img.shields.io/badge/code%20style-Ruff-D7FF64?logo=ruff&logoColor=black
+[ruff]: https://docs.astral.sh/ruff/
+[badge-license]: https://img.shields.io/badge/License-MIT-blue.svg
