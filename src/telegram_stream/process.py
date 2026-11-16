@@ -25,13 +25,16 @@ async def terminate(process: asyncio.subprocess.Process, timeout: float = 10) ->
 
 
 async def spawn(
-    command: list[str], *, stderr: int = asyncio.subprocess.PIPE
+    command: list[str],
+    *,
+    stderr: int = asyncio.subprocess.PIPE,
+    stdout: int = asyncio.subprocess.PIPE,
 ) -> asyncio.subprocess.Process:
     """Do not orphan a process if cancellation races OS process creation."""
     creation = asyncio.create_task(
         asyncio.create_subprocess_exec(
             *command,
-            stdout=asyncio.subprocess.PIPE,
+            stdout=stdout,
             stderr=stderr,
             start_new_session=True,
             limit=262144,

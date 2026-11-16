@@ -33,5 +33,35 @@ services:
         max-size: 10m
         max-file: "3"
 
+  web:
+    profiles: ["web"]
+    build:
+      context: .
+      target: web
+    image: telegram-stream:web
+    init: true
+    restart: unless-stopped
+    # Deliberately do not pass .env, Telegram credentials, or session volumes.
+    environment:
+      PAGE_URL: ${WEB_PAGE_URL:-${SOURCE}}
+      WEB_WIDTH: ${VIDEO_WIDTH:-1280}
+      WEB_HEIGHT: ${VIDEO_HEIGHT:-720}
+      WEB_FPS: ${VIDEO_FPS:-30}
+      WEB_READY_TIMEOUT: ${SOURCE_TIMEOUT:-60}
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m,mode=1777
+    shm_size: 256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
 volumes:
   telegram-state:

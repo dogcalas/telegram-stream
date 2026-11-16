@@ -66,6 +66,7 @@ class Settings:
     end_on_shutdown: bool = False
     cookies_file: Path | None = field(default=None, repr=False)
     extractor_args: str = field(default="", repr=False)
+    web_stream_url: str = field(default="http://web:8080/index.m3u8", repr=False)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None, *, require_stream: bool = True) -> Self:
@@ -75,8 +76,8 @@ class Settings:
         if not re.fullmatch(r"[0-9a-fA-F]{32}", api_hash):
             raise FatalError("TELEGRAM_API_HASH must be the 32-character API hash")
         kind = env.get("SOURCE_TYPE", "auto").lower()
-        if kind not in {"auto", "youtube", "hls", "file"}:
-            raise FatalError("SOURCE_TYPE must be auto, youtube, hls, or file")
+        if kind not in {"auto", "youtube", "hls", "file", "web"}:
+            raise FatalError("SOURCE_TYPE must be auto, youtube, hls, file, or web")
         preset = env.get("ENCODER_PRESET", "veryfast")
         if preset not in {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium"}:
             raise FatalError("Unsupported ENCODER_PRESET")
@@ -108,6 +109,7 @@ class Settings:
                 Path(env["YOUTUBE_COOKIES_FILE"]) if env.get("YOUTUBE_COOKIES_FILE") else None
             ),
             extractor_args=env.get("YOUTUBE_EXTRACTOR_ARGS", ""),
+            web_stream_url=env.get("WEB_STREAM_URL", "http://web:8080/index.m3u8"),
         )
         if settings.width % 2 or settings.height % 2:
             raise FatalError("VIDEO_WIDTH and VIDEO_HEIGHT must be even")
@@ -119,6 +121,10 @@ class Settings:
             parsed = urlsplit(settings.source)
             if parsed.scheme not in {"http", "https"} or not parsed.hostname:
                 raise FatalError("Network sources must be HTTP or HTTPS URLs")
+        if settings.kind == "web":
+            stream = urlsplit(settings.web_stream_url)
+            if stream.scheme not in {"http", "https"} or not stream.hostname:
+                raise FatalError("WEB_STREAM_URL must be an HTTP or HTTPS HLS endpoint")
         return settings
 
     @property

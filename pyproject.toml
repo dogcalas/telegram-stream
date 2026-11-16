@@ -26,6 +26,9 @@ classifiers = [
 telegram-stream = "telegram_stream.cli:main"
 
 [dependency-groups]
+browser = [
+    "websockets>=15,<18",
+]
 dev = [
     "pytest>=9.0.0",
     "ruff>=0.14.0",

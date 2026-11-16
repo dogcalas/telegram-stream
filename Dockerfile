@@ -33,6 +33,31 @@ COPY src/ ./src/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable
 
+FROM base AS web-builder
+
+COPY --from=ghcr.io/astral-sh/uv:0.12.23 /uv /usr/local/bin/uv
+ENV UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PYTHON=/usr/local/bin/python
+COPY pyproject.toml uv.lock README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --only-group browser --no-install-project
+
+FROM base AS web
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+       chromium xvfb fonts-liberation fonts-noto-color-emoji \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=web-builder /app/.venv /app/.venv
+COPY src/ /app/src/
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH=/app/src
+USER app
+HEALTHCHECK --interval=10s --timeout=5s --start-period=90s --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+ENTRYPOINT ["python", "-m", "telegram_stream.web"]
+
 FROM builder AS development
 
 COPY . .

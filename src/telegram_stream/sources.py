@@ -112,6 +112,10 @@ class SourceResolver:
             if not path.is_file():
                 raise TemporaryError("Local source file is not available")
             inputs = (MediaInput(str(path)),)
+        elif self.settings.kind == "web":
+            # The isolated browser sidecar renders HTML into a private HLS feed.
+            # Never give the HTML page URL directly to ffprobe/FFmpeg.
+            inputs = (MediaInput(self.settings.web_stream_url),)
         else:
             inputs = (MediaInput(self.settings.source),)
         video_index = None

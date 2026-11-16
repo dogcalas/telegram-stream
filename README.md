@@ -1,7 +1,7 @@
 # telegram-stream
 
-A small, single-channel service that continuously publishes YouTube Live, HLS, or
-looped local video to **Telegram Channel Live Stories** using a Telegram **user**
+A small, single-channel service that continuously publishes YouTube Live, HLS,
+web pages, or looped local video to **Telegram Channel Live Stories** using a Telegram **user**
 account, MTProto, and FFmpeg. Requires Python 3.12+ or Docker Compose v2.
 
 This is **not** a traditional channel livestream. It obtains RTMP credentials with
@@ -135,8 +135,62 @@ Files loop indefinitely with real-time input pacing. Missing audio is replaced
 with silence. At an FFmpeg restart, local playback resumes from the **beginning**,
 not a saved playback position. Network failures can produce visible gaps.
 
+### Web pages (optional browser sidecar)
+
+```dotenv
+SOURCE_TYPE=web
+SOURCE=https://reinierhernandez.com
+WEB_STREAM_URL=http://web:8080/index.m3u8
+VIDEO_WIDTH=720
+VIDEO_HEIGHT=1280
+VIDEO_FPS=30
+```
+
+```sh
+docker compose --profile web up -d --build --wait
+docker compose logs -f web streamer
+```
+
+The optional `web` container runs Chromium in a virtual Xvfb display. It captures
+the visible page and serves a rolling HLS feed on the **private Compose network**;
+the existing publisher sends that feed to Telegram. No host ports are exposed.
+There is still only one Telegram publisher/keeper.
+
+**This first web mode captures video only.** Chromium audio is muted; the
+publisher supplies silent AAC. It does not play the MP4's music, capture website
+audio, automatically scroll, click, or log in. Public, trusted pages are supported.
+Normal page animations and client-side data updates continue running.
+
+For vertical 720×1280 output, Chromium renders a 540×960 CSS viewport at 2× scale,
+then downsamples to 720×1280. This avoids Chrome's minimum-window-width cropping.
+Web capture needs additional CPU/RAM and adds a few seconds of HLS latency.
+
+The sidecar waits for the page to load and supervises Chromium, Xvfb, and fresh
+HLS segments. If rendering fails, it exits for Docker to restart it, while the
+publisher's normal source retries recover the feed.
+
+To preview a page while leaving the current MP4/HLS publisher untouched:
+
+```sh
+WEB_PAGE_URL=https://reinierhernandez.com docker compose --profile web up -d --build --wait web
+```
+
+Then configure `SOURCE_TYPE=web` and `SOURCE` and recreate `streamer` to switch.
+`WEB_PAGE_URL` is an optional sidecar-only override; normally leave it empty so
+the browser uses `SOURCE`. Stop the sidecar when switching back to files:
+`docker compose --profile web stop web`.
+
+**Browser isolation:** it receives neither `.env` nor Telegram credentials or
+session/media volumes. Its filesystem is read-only except ephemeral memory,
+Linux capabilities are dropped, and Chrome DevTools listens only on loopback.
+Chromium uses `--no-sandbox` inside this locked-down, credential-free container
+for Docker compatibility. This is not a replacement for Chromium's sandbox:
+only open trusted pages, keep the image updated, and do not expose its HLS server
+or DevTools to the Internet.
+
 `SOURCE_TYPE=auto` detects YouTube domains, treats other HTTP(S) URLs as HLS/network
-inputs, and treats remaining values as filesystem paths.
+inputs, and treats remaining values as filesystem paths. Use explicit `web` for
+HTML pages; they are never automatically mistaken for media streams.
 
 ## Configuration
 
@@ -159,6 +213,8 @@ See [`.env.example`](.env.example) for all settings. The application reads the
 | `ADOPT_EXISTING_LIVE_STORY` | `false` | Explicitly permit publishing into an unknown RTMP story |
 | `END_LIVE_STORY_ON_SHUTDOWN` | `false` | End the owned story on graceful shutdown |
 | `DATA_DIR` | `./data` | Local persistent directory; Compose overrides to `/data` |
+| `WEB_STREAM_URL` | `http://web:8080/index.m3u8` | Browser sidecar's private HLS feed |
+| `WEB_PAGE_URL` | empty | Optional sidecar page override, otherwise uses `SOURCE` |
 
 Encoding uses H.264 main profile, `yuv420p`, AAC stereo, a two-second GOP, and FLV.
 Software encoding is intentional; hardware/GPU passthrough is outside the MVP.
@@ -242,6 +298,7 @@ Useful events include `live_story_ready`, `source_retry`, `source_interrupted`,
 | Repeated YouTube extraction failures | Check the live URL, network/IP restrictions, cookies/tokens; update the locked yt-dlp dependency and rebuild |
 | FFmpeg stalls / source retries | Check source reachability, expiring URLs, upload bandwidth, CPU |
 | Volume permission denied | Ensure `/data` belongs to UID/GID 10001 with private permissions |
+| Web source retries / no browser feed | Start the `web` profile, inspect `docker compose logs web`, and check the page loads |
 
 ## Linux / Proxmox deployment and security
 
@@ -293,6 +350,11 @@ the runtime image. For a development container, override its entrypoint:
 docker build --target development -t telegram-stream:dev .
 docker run --rm --entrypoint ruff telegram-stream:dev check .
 ```
+
+The separate `web` image installs only the `browser` dependency group, not
+Telethon/yt-dlp/Deno. It adds Chromium, Xvfb, and fonts. For local sidecar development,
+install Chromium/Xvfb and use `uv run --group browser python -m telegram_stream.web`
+with `PAGE_URL` and `WEB_WIDTH`/`WEB_HEIGHT`/`WEB_FPS` in the environment.
 
 ### Validation
 
