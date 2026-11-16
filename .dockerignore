@@ -26,3 +26,6 @@
 # Local files
 **/.DS_Store
 **/*.log
+/data
+/media
+/secrets

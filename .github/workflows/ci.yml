@@ -35,5 +35,8 @@ jobs:
       - name: Check formatting, lint, and types
         run: make check
 
+      - name: Test lifecycle and media supervision
+        run: make test
+
       - name: Build distributions
         run: make build

@@ -1,20 +1,28 @@
 # syntax=docker/dockerfile:1
 
-FROM python:3.14-slim AS base
+FROM python:3.12-slim-bookworm AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    DATA_DIR=/data \
+    XDG_CACHE_HOME=/tmp/cache \
+    DENO_DIR=/tmp/deno
 
 WORKDIR /app
 
 RUN useradd --create-home --uid 10001 --user-group app
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+RUN install -d -m 0700 -o app -g app /data
 
 FROM base AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.23 /uv /usr/local/bin/uv
 
 ENV UV_LINK_MODE=copy \
-    UV_PYTHON_DOWNLOADS=never
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PYTHON=/usr/local/bin/python
 
 # Cache dependencies separately from the library's source code.
 COPY pyproject.toml uv.lock README.md ./
@@ -35,7 +43,8 @@ RUN chown -R app:app /app
 ENV PATH="/app/.venv/bin:$PATH"
 
 USER app
-CMD ["python"]
+ENTRYPOINT ["telegram-stream"]
+CMD ["run"]
 
 FROM base AS runtime
 
@@ -45,4 +54,7 @@ COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 USER app
-CMD ["python"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=3 \
+    CMD ["telegram-stream", "healthcheck"]
+ENTRYPOINT ["telegram-stream"]
+CMD ["run"]

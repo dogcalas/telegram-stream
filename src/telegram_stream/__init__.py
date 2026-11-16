@@ -1,1 +1,1 @@
-"""Streaming tools for Telegram Stories (under development)."""
+"""Continuous, recoverable publishing to Telegram Live Stories."""
