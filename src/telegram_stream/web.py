@@ -226,6 +226,9 @@ class WebCapture:
         self.processes.append(process)
 
     async def run(self) -> None:
+        # Chromium's crash reporter also needs a writable HOME/config location.
+        # Both are private tmpfs paths in the sidecar, never host/browser profiles.
+        Path.home().mkdir(parents=True, mode=0o700, exist_ok=True)
         STREAM_DIRECTORY.mkdir(mode=0o700, exist_ok=True)
         self.server = ThreadingHTTPServer(
             ("0.0.0.0", 8080),
@@ -296,8 +299,10 @@ class WebCapture:
                 await asyncio.to_thread(self.thread.join)
 
     def _check_processes(self) -> None:
-        if any(process.returncode is not None for process in self.processes):
-            raise TemporaryError("Browser, display, or capture encoder exited")
+        for index, process in enumerate(self.processes):
+            if process.returncode is not None:
+                name = ("display", "browser", "encoder")[index]
+                raise TemporaryError(f"Web {name} exited (code {process.returncode})")
 
 
 class StreamHandler(SimpleHTTPRequestHandler):

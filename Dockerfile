@@ -52,7 +52,9 @@ RUN apt-get update \
 COPY --from=web-builder /app/.venv /app/.venv
 COPY src/ /app/src/
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH=/app/src
+    PYTHONPATH=/app/src \
+    HOME=/tmp/browser-home \
+    XDG_CONFIG_HOME=/tmp/browser-config
 USER app
 HEALTHCHECK --interval=10s --timeout=5s --start-period=90s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
