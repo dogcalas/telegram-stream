@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import NoReturn
@@ -16,9 +17,12 @@ from telegram_stream.errors import (
     CreationEndedError,
     FatalError,
     RetryAfter,
+    TelegramRejectedError,
     TemporaryError,
 )
-from telegram_stream.logging import redactor
+from telegram_stream.logging import event, redactor
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -78,7 +82,7 @@ def _raise_rpc_error(error: errors.RPCError) -> NoReturn:
         error.code == 400 and message not in {"GROUPCALL_INVALID", "GROUPCALL_FORBIDDEN"}
     ):
         identifier = re.sub(r"[^A-Z0-9_]", "", message)[:100]
-        raise FatalError(f"Telegram rejected the operation: {identifier}") from None
+        raise TelegramRejectedError(identifier) from None
     raise TemporaryError("Telegram RPC temporarily failed") from None
 
 
@@ -101,6 +105,7 @@ class Telegram:
         self.channel_id = 0
         self.changed = asyncio.Event()
         self._call_id: int | None = None
+        self._captions_supported = True
         self.client.add_event_handler(self._on_update, events.Raw())
         redactor.add(settings.api_hash, settings.source, settings.extractor_args)
 
@@ -245,17 +250,27 @@ class Telegram:
         return RtmpCredentials(result.url, result.key)
 
     async def start(self, random_id: int) -> LiveStory:
-        response = await self._request(
-            functions.stories.StartLiveRequest(
-                peer=self.input_peer,
-                privacy_rules=[types.InputPrivacyValueAllowAll()],
-                random_id=random_id,
-                rtmp_stream=True,
-                caption=self.settings.caption or None,
-                pinned=False,
-                messages_enabled=False,
-            )
+        request = functions.stories.StartLiveRequest(
+            peer=self.input_peer,
+            privacy_rules=[types.InputPrivacyValueAllowAll()],
+            random_id=random_id,
+            rtmp_stream=True,
+            caption=(self.settings.caption or None) if self._captions_supported else None,
+            pinned=False,
+            messages_enabled=False,
         )
+        try:
+            response = await self._request(request)
+        except TelegramRejectedError as error:
+            if error.identifier != "CAPTION_NOT_EMPTY" or request.caption is None:
+                raise
+            # Some Telegram deployments reject captions on RTMP stories despite the
+            # optional schema field. This explicit rejection permits one safe retry.
+            self._captions_supported = False
+            request.caption = None
+            request.entities = None
+            event(logger, "live_story_caption_omitted", reason=error.identifier)
+            response = await self._request(request)
         updates: list[object] = []
         if isinstance(response, (types.Updates, types.UpdatesCombined)):
             updates.extend(response.updates)

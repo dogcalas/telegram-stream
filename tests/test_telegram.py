@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from telethon import errors, functions, types
+from telethon.tl.tlobject import TLObject, TLRequest
 
 from telegram_stream.config import Settings
 from telegram_stream.errors import AlreadyLiveError, FatalError, RetryAfter, TemporaryError
@@ -66,6 +67,67 @@ def test_unknown_already_live_rpc_is_classified() -> None:
     with pytest.raises(AlreadyLiveError) as caught:
         _raise_rpc_error(errors.RPCError(None, "STORY_LIVE_ALREADY_123", 400))
     assert caught.value.story_id == 123
+
+
+def test_caption_rejection_retries_same_id_without_caption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        gateway = Telegram(Settings(123, "a" * 32, data_dir=tmp_path, caption="Live"))
+        gateway.peer = types.InputPeerChannel(42, 43)
+        attempts: list[tuple[int, str | None, bool | None]] = []
+        item = types.StoryItem(
+            id=7,
+            date=None,
+            expire_date=None,
+            media=types.MessageMediaVideoStream(types.InputGroupCall(70, 700), rtmp_stream=True),
+        )
+
+        async def reject_caption_once(request: TLRequest) -> TLObject:
+            assert isinstance(request, functions.stories.StartLiveRequest)
+            attempts.append((request.random_id, request.caption, request.rtmp_stream))
+            if len(attempts) == 1:
+                _raise_rpc_error(errors.RPCError(None, "CAPTION_NOT_EMPTY", 400))
+            assert not int.from_bytes(bytes(request)[4:8], "little") & 1
+            return types.Updates([types.UpdateStory(types.PeerChannel(42), item)], [], [], None, 0)
+
+        monkeypatch.setattr(gateway, "_request", reject_caption_once)
+        try:
+            assert (await gateway.start(123)).story_id == 7
+            assert (await gateway.start(124)).story_id == 7
+            assert attempts == [(123, "Live", True), (123, None, True), (124, None, True)]
+        finally:
+            await gateway.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("caption", "rpc_error"),
+    [("", "CAPTION_NOT_EMPTY"), ("Live", "CAPTION_TOO_LONG"), ("Live", "CHAT_ADMIN_REQUIRED")],
+)
+def test_caption_fallback_does_not_hide_other_rejections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caption: str, rpc_error: str
+) -> None:
+    async def scenario() -> None:
+        gateway = Telegram(Settings(123, "a" * 32, data_dir=tmp_path, caption=caption))
+        gateway.peer = types.InputPeerChannel(42, 43)
+        attempts = 0
+
+        async def reject(request: TLRequest) -> TLObject:
+            nonlocal attempts
+            attempts += 1
+            _raise_rpc_error(errors.RPCError(None, rpc_error, 400))
+
+        monkeypatch.setattr(gateway, "_request", reject)
+        try:
+            with pytest.raises(FatalError, match=rpc_error):
+                await gateway.start(123)
+            assert attempts == 1
+        finally:
+            await gateway.close()
+
+    asyncio.run(scenario())
 
 
 def test_floodwait_preserves_server_delay() -> None:

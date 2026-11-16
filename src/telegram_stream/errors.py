@@ -5,6 +5,14 @@ class FatalError(Exception):
     """Requires operator intervention, rather than automatic retries."""
 
 
+class TelegramRejectedError(FatalError):
+    """A permanent RPC rejection, without request arguments or credentials."""
+
+    def __init__(self, identifier: str) -> None:
+        super().__init__(f"Telegram rejected the operation: {identifier}")
+        self.identifier = identifier
+
+
 class TemporaryError(Exception):
     """A bounded operation failed and can be retried."""
 

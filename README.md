@@ -149,7 +149,7 @@ See [`.env.example`](.env.example) for all settings. The application reads the
 | `VIDEO_FPS` | `30` | Constant output frame rate |
 | `VIDEO_BITRATE`, `AUDIO_BITRATE` | `2500k`, `128k` | H.264 / AAC bitrate |
 | `ENCODER_PRESET` | `veryfast` | CPU/quality trade-off |
-| `LIVE_STORY_CAPTION` | empty | Caption on newly created stories |
+| `LIVE_STORY_CAPTION` | empty | Optional caption; omitted if Telegram rejects RTMP captions |
 | `TELEGRAM_POLL_INTERVAL` | `30` | Authoritative story polling, seconds |
 | `RPC_TIMEOUT` | `15` | Telegram RPC and media network-I/O timeout |
 | `SOURCE_TIMEOUT` | `60` | Per extraction/probe subprocess timeout |
@@ -182,6 +182,10 @@ Recreate the container to apply `.env` changes: `docker compose up -d`.
   source re-resolution and publisher restart, not blind story creation.
 - Retries back off exponentially with jitter. Telegram FloodWait minimums are
   respected even if new updates arrive. Permanent permission/auth errors exit.
+- Some Telegram deployments reject nonempty RTMP captions with `CAPTION_NOT_EMPTY`.
+  The service retries that explicit rejection once without a caption, preserving
+  the same random ID, and omits captions for the remainder of that process.
+  Other errors are not silently retried with modified parameters.
 
 An unknown active story is not silently taken over. If a creation response is
 lost, the service first attempts recovery with its persisted random ID. Telegram
@@ -233,6 +237,7 @@ Useful events include `live_story_ready`, `source_retry`, `source_interrupted`,
 | Unauthorized session | Stop, run `auth`, restart; check account/session revocation |
 | `CHAT_ADMIN_REQUIRED` / eligibility errors | Check user permissions and channel Live Story eligibility |
 | Unknown/ambiguous active story | Follow the explicit adoption procedure above |
+| `live_story_caption_omitted` | Telegram rejected the optional RTMP caption; streaming continues without it |
 | Another process owns `DATA_DIR` | Stop the other service/auth process; do not delete lock files |
 | Repeated YouTube extraction failures | Check the live URL, network/IP restrictions, cookies/tokens; update the locked yt-dlp dependency and rebuild |
 | FFmpeg stalls / source retries | Check source reachability, expiring URLs, upload bandwidth, CPU |
