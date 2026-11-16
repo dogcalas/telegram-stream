@@ -1,0 +1,45 @@
+[project]
+name = "telegram-stream"
+version = "0.1.0"
+description = "Python toolkit for streaming to Telegram Stories."
+readme = "README.md"
+authors = [
+    { name = "Reinier Hernández", email = "sasuke.reinier@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = []
+keywords = ["telegram", "stories", "streaming", "video"]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.0",
+    "ruff>=0.14.0",
+    "ty>=0.0.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN"]
+
+[tool.ty.environment]
+python-version = "3.14"
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+addopts = ["--import-mode=importlib", "--strict-config", "--strict-markers", "-ra"]

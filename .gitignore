@@ -1,0 +1,32 @@
+# Python and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Packaging
+/build/
+/dist/
+*.egg-info/
+
+# Tool caches and reports
+.pytest_cache/
+.ruff_cache/
+.ty_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Secrets and Telegram authentication sessions
+.env
+.env.*
+!.env.example
+*.session
+*.session-journal
+*.session-wal
+*.session-shm
+
+# Local files
+.DS_Store
+*.log
