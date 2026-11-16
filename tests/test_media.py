@@ -2,6 +2,7 @@ import asyncio
 import json
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -50,7 +51,12 @@ def test_youtube_urls_are_refreshed_on_each_resolution(
     async def scenario() -> None:
         resolutions = 0
 
-        async def fake_capture(command: list[str], timeout: float) -> bytes:
+        async def fake_capture(
+            command: list[str],
+            timeout: float,
+            *,
+            diagnostic: Callable[[bytes], str] | None = None,
+        ) -> bytes:
             nonlocal resolutions
             if command[0] == "yt-dlp":
                 resolutions += 1

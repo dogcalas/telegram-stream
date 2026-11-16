@@ -2,13 +2,18 @@
 
 import json
 import re
-import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from telegram_stream.config import Settings
+from telegram_stream.cookies import (
+    normalize_document,
+    read_document,
+    write_private,
+    youtube_diagnostic,
+)
 from telegram_stream.errors import FatalError, TemporaryError
 from telegram_stream.logging import redactor
 from telegram_stream.process import capture
@@ -75,15 +80,17 @@ class SourceResolver:
             command += ["--extractor-args", self.settings.extractor_args]
         # yt-dlp may update its cookie jar. Never write back to a mounted secret.
         with tempfile.TemporaryDirectory(prefix="telegram-stream-") as directory:
-            if self.settings.cookies_file is not None:
-                if not self.settings.cookies_file.is_file():
+            cookie_file = self.settings.youtube_cookie_file
+            if cookie_file is not None:
+                if not cookie_file.is_file():
                     raise FatalError("YOUTUBE_COOKIES_FILE is not a readable file")
                 cookies = Path(directory) / "cookies.txt"
-                shutil.copyfile(self.settings.cookies_file, cookies)
-                cookies.chmod(0o600)
+                write_private(cookies, normalize_document(read_document(cookie_file)))
                 command += ["--cookies", str(cookies)]
             output = await capture(
-                [*command, "--", self.settings.source], self.settings.source_timeout
+                [*command, "--", self.settings.source],
+                self.settings.source_timeout,
+                diagnostic=youtube_diagnostic,
             )
         try:
             info = json.loads(output)

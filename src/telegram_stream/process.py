@@ -3,6 +3,7 @@
 import asyncio
 import os
 import signal
+from collections.abc import Callable
 from contextlib import suppress
 
 from telegram_stream.errors import TemporaryError
@@ -55,15 +56,25 @@ async def spawn(
         raise
 
 
-async def capture(command: list[str], timeout: float) -> bytes:
+async def capture(
+    command: list[str],
+    timeout: float,
+    *,
+    diagnostic: Callable[[bytes], str] | None = None,
+) -> bytes:
     try:
-        process = await spawn(command, stderr=asyncio.subprocess.DEVNULL)
+        process = await spawn(
+            command,
+            stderr=asyncio.subprocess.PIPE if diagnostic else asyncio.subprocess.DEVNULL,
+        )
     except FileNotFoundError:
         raise TemporaryError(f"Required executable not found: {command[0]}") from None
     try:
         async with asyncio.timeout(timeout):
-            stdout, _ = await process.communicate()
+            stdout, stderr = await process.communicate()
         if process.returncode:
+            if diagnostic is not None:
+                raise TemporaryError(diagnostic(stderr or b""))
             raise TemporaryError(f"{command[0]} failed (exit {process.returncode})")
         return stdout
     finally:

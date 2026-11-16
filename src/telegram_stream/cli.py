@@ -12,6 +12,8 @@ import signal
 from telethon import TelegramClient, types
 
 from telegram_stream.config import Settings, data_directory
+from telegram_stream.cookie_cli import configure_parser
+from telegram_stream.cookie_cli import run as run_cookies
 from telegram_stream.errors import FatalError
 from telegram_stream.health import read_status
 from telegram_stream.logging import configure, event, redactor
@@ -81,7 +83,10 @@ def _report_error(error: BaseException) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Continuous Telegram channel Live Stories")
-    parser.add_argument("command", choices=["auth", "run", "status", "healthcheck"])
+    commands = parser.add_subparsers(dest="command", required=True)
+    for command in ("auth", "run", "status", "healthcheck"):
+        commands.add_parser(command)
+    configure_parser(commands.add_parser("cookies", help="Capture/import/check YouTube cookies"))
     args = parser.parse_args()
     os.umask(0o077)
     configure()
@@ -91,6 +96,9 @@ def main() -> None:
             print(json.dumps(status))
         raise SystemExit(0 if status["healthy"] else 1)
     try:
+        if args.command == "cookies":
+            run_cookies(args)
+            return
         settings = Settings.from_env(require_stream=args.command == "run")
         redactor.add(settings.api_hash, settings.source, settings.extractor_args)
         with InstanceLock(settings.data_dir):

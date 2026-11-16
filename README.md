@@ -85,6 +85,22 @@ The video must currently be live; a channel's `/live` URL also works. YouTube
 may block datacenter IPs or require cookies/tokens. The service does not bypass
 those restrictions; see [yt-dlp's guidance](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#youtube).
 
+For extension-free cookie capture, run this **on the computer with your browser**:
+
+```sh
+docker compose build streamer
+uv run --locked telegram-stream cookies capture --browser firefox --install
+```
+
+This asks for permission, exports only unexpired YouTube cookies, and installs
+them privately in the Docker volume over stdin. Leave `YOUTUBE_COOKIES_FILE`
+empty for managed cookies. It does not switch sources or interrupt a live stream.
+Use `--browser chrome` for Chrome, and optionally `--check-url "https://…"` to test
+a live YouTube source before replacing existing cookies.
+
+See [YouTube cookie capture and checks](docs/youtube-cookies.md) for profiles,
+local-file import, privacy, and troubleshooting.
+
 ### HLS / M3U8
 
 ```dotenv

@@ -128,6 +128,13 @@ class Settings:
         return settings
 
     @property
+    def youtube_cookie_file(self) -> Path | None:
+        if self.cookies_file is not None:
+            return self.cookies_file
+        managed = self.data_dir / "youtube-cookies.txt"
+        return managed if managed.is_file() else None
+
+    @property
     def kind(self) -> str:
         if self.source_type != "auto":
             return self.source_type

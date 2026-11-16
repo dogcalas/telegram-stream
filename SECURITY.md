@@ -62,6 +62,12 @@ can be prepared. There is no guaranteed response or remediation timetable.
   mode `0600` for `.env` and private state directories with mode `0700`. For
   container bind mounts, ensure the application user (UID/GID `10001`) has the
   necessary access without making credentials world-readable or writable.
+- Native cookie capture requires operator confirmation (or `--yes`) on the
+  machine with the browser. It may read/copy that browser's cookie database
+  locally to decrypt it, but exports only unexpired YouTube-domain cookies.
+  Never run capture as root or mount a real browser profile/keychain into Docker.
+  Managed imports travel over stdin and atomically replace a mode-0600 file.
+  Optional online checks validate a staged candidate before replacing old cookies.
 - Use encrypted disks and backups where appropriate. Stop the service before
   backing up its state, and retain the session and ownership state together.
   Do not share or casually delete the state volume to troubleshoot a problem.
