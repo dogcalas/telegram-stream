@@ -153,7 +153,11 @@ def install_in_compose(data: bytes, check_url: str | None) -> None:
                 record = json.loads(line)
             except ValueError:
                 continue
-            if record.get("event") == "fatal" and isinstance(record.get("reason"), str):
+            if (
+                isinstance(record, dict)
+                and record.get("event") == "fatal"
+                and isinstance(record.get("reason"), str)
+            ):
                 raise FatalError(record["reason"])
         raise FatalError("Docker import failed; build the updated streamer image and retry")
     try:
